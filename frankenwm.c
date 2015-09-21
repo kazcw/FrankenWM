@@ -259,7 +259,7 @@ static client *head = NULL, *prevfocus = NULL, *current = NULL, *scrpd = NULL;
 static xcb_ewmh_connection_t *ewmh;
 static xcb_atom_t wmatoms[WM_COUNT], netatoms[NET_COUNT];
 static desktop desktops[DESKTOPS];
-static filo *miniq[DESKTOPS];
+static filo *miniq;
 static regex_t appruleregex[LENGTH(rules)];
 
 /* events array
@@ -594,10 +594,11 @@ void cleanup(void)
         regfree(&appruleregex[i]);
 
     for (unsigned int i = 0; i < DESKTOPS; i++) {
-        for (struct filo *tmp = miniq[i], *tmp_next; tmp; tmp = tmp_next) {
+        for (struct filo *tmp = miniq[i].next, *tmp_next; tmp; tmp = tmp_next) {
             tmp_next = tmp->next;
             free(tmp);
         }
+        free(miniq);
 
         for (client *c = desktops[i].head, *c_next; c; c = c_next) {
             c_next = c->next;
@@ -1427,7 +1428,7 @@ void minimize()
     if (!current)
         return;
 
-    tmp = miniq[current_desktop];
+    tmp = &miniq[current_desktop];
     while (tmp->next)
         tmp = tmp->next;
 
@@ -1840,11 +1841,11 @@ void restore()
 {
     filo *tmp;
 
-    if (!miniq[current_desktop]->c)
+    if (!miniq[current_desktop].c)
         return;
 
     /* find the last occupied filo, before the free one */
-    tmp = miniq[current_desktop];
+    tmp = &miniq[current_desktop];
     while (tmp->next) {
         if (!tmp->next->next)
             break;
@@ -2037,12 +2038,10 @@ int setup(int default_screen)
     wh = screen->height_in_pixels - PANEL_HEIGHT;
     borders = BORDER_WIDTH;
     gaps = USELESSGAP;
+    miniq = calloc(DESKTOPS, sizeof(filo));
     for (unsigned int i = 0; i < DESKTOPS; i++) {
         desktops[i].gaps = USELESSGAP;
         save_desktop(i);
-        miniq[i] = calloc(1, sizeof(struct filo));
-        if (!miniq[i])
-            err(EXIT_FAILURE, "error: cannot allocate miniq\n");
     }
 
     win_focus   = getcolor(FOCUS);
