@@ -257,6 +257,7 @@ static unsigned int numlockmask, win_unfocus, win_focus;
 static xcb_connection_t *dis;
 static xcb_screen_t *screen;
 static client *head = NULL, *prevfocus = NULL, *current = NULL, *scrpd = NULL;
+static uint32_t eventmask;
 
 static xcb_ewmh_connection_t *ewmh;
 static xcb_atom_t wmatoms[WM_COUNT], netatoms[NET_COUNT];
@@ -872,8 +873,6 @@ void enternotify(xcb_generic_event_t *e)
 {
     xcb_enter_notify_event_t *ev = (xcb_enter_notify_event_t *)e;
 
-    if (!FOLLOW_MOUSE)
-        return;
     DEBUG("xcb: enter notify");
     client *c = wintoclient(ev->event);
 
@@ -1495,6 +1494,11 @@ void mousemotion(const Arg *arg)
     tile();
     update_current(current);
 
+    static const uint32_t mmmask = XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT
+                                 | XCB_EVENT_MASK_BUTTON_MOTION
+                                 | XCB_EVENT_MASK_KEY_PRESS     | XCB_EVENT_MASK_KEY_RELEASE
+                                 | XCB_EVENT_MASK_BUTTON_PRESS  | XCB_EVENT_MASK_BUTTON_RELEASE;
+    xcb_change_window_attributes(dis, screen->root, XCB_CW_EVENT_MASK, &mmmask);
     xcb_generic_event_t *e = NULL;
     xcb_motion_notify_event_t *ev = NULL;
     bool ungrab = false;
@@ -1526,6 +1530,7 @@ void mousemotion(const Arg *arg)
             free(e);
     } while (!ungrab && current);
     DEBUG("xcb: ungrab");
+    xcb_change_window_attributes(dis, screen->root, XCB_CW_EVENT_MASK, &eventmask);
     xcb_ungrab_pointer(dis, XCB_CURRENT_TIME);
 
     free(pointer);
@@ -2104,16 +2109,20 @@ int setup(int default_screen)
     /* set events */
     for (unsigned int i = 0; i < XCB_NO_OPERATION; i++)
         events[i] = NULL;
+    uint32_t mask = 0;
     events[0]                       = xerror;
-    events[XCB_BUTTON_PRESS]        = buttonpress;
-    events[XCB_CLIENT_MESSAGE]      = clientmessage;
-    events[XCB_CONFIGURE_REQUEST]   = configurerequest;
-    events[XCB_DESTROY_NOTIFY]      = destroynotify;
-    events[XCB_ENTER_NOTIFY]        = enternotify;
-    events[XCB_KEY_PRESS]           = keypress;
-    events[XCB_MAP_REQUEST]         = maprequest;
-    events[XCB_PROPERTY_NOTIFY]     = propertynotify;
-    events[XCB_UNMAP_NOTIFY]        = unmapnotify;
+    events[XCB_BUTTON_PRESS]        = buttonpress;      mask |= XCB_EVENT_MASK_BUTTON_PRESS;
+    events[XCB_CLIENT_MESSAGE]      = clientmessage;    mask |= 0;
+    events[XCB_CONFIGURE_REQUEST]   = configurerequest; mask |= XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT;
+    events[XCB_DESTROY_NOTIFY]      = destroynotify;    mask |= XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+    if (FOLLOW_MOUSE)
+        { events[XCB_ENTER_NOTIFY]  = enternotify;      mask |= XCB_EVENT_MASK_ENTER_WINDOW; }
+    events[XCB_KEY_PRESS]           = keypress;         mask |= XCB_EVENT_MASK_KEY_PRESS;
+    events[XCB_MAP_REQUEST]         = maprequest;       mask |= XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT;
+    events[XCB_PROPERTY_NOTIFY]     = propertynotify;   mask |= XCB_EVENT_MASK_PROPERTY_CHANGE;
+    events[XCB_UNMAP_NOTIFY]        = unmapnotify;      mask |= XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+    eventmask = mask;
+    xcb_change_window_attributes(dis, screen->root, XCB_CW_EVENT_MASK, &eventmask);
 
     /* grab existing windows */
     xcb_get_window_attributes_reply_t *attr;
