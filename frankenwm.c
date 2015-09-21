@@ -2120,29 +2120,33 @@ int setup(int default_screen)
     events[XCB_UNMAP_NOTIFY]        = unmapnotify;
 
     /* grab existing windows */
-    xcb_get_window_attributes_reply_t *attr;
     xcb_query_tree_reply_t *reply = xcb_query_tree_reply(dis,
                                         xcb_query_tree(dis, screen->root), 0);
     if (reply) {
         int len = xcb_query_tree_children_length(reply);
         xcb_window_t *children = xcb_query_tree_children(reply);
+        xcb_get_window_attributes_reply_t **attrs;
+        attrs = calloc(len, sizeof(xcb_get_window_attributes_reply_t *));
+        xcb_get_property_cookie_t *dsks = calloc(len, sizeof(xcb_get_property_cookie_t));
+        for (int i = 0; i < len; i++)
+            dsks[i]  = xcb_ewmh_get_wm_desktop(ewmh, children[i]);
+        xcb_get_attributes(children, attrs, len);
         int cd = current_desktop;
+        uint32_t dsk;
         for (int i = 0; i < len; i++) {
-            attr = xcb_get_window_attributes_reply(dis,
-                            xcb_get_window_attributes(dis, children[i]), NULL);
+            xcb_get_window_attributes_reply_t *attr = attrs[i];
+            /* get desktop property set by client itself or previous wm */
+            int haddsk = xcb_ewmh_get_wm_desktop_reply(ewmh, dsks[i], &dsk, NULL);
             if (!attr)
                 continue;
             /* ignore windows in override redirect mode or with input only
              * class as we won't see them */
             if (!attr->override_redirect
                 && attr->_class != XCB_WINDOW_CLASS_INPUT_ONLY) {
-                uint32_t dsk = cd;
-                int haddsk = xcb_ewmh_get_wm_desktop_reply(ewmh,
-                    xcb_ewmh_get_wm_desktop(ewmh, children[i]), &dsk, NULL);
                 if ((!haddsk || dsk == cd) && attr->map_state == XCB_MAP_STATE_UNMAPPED) {
                     /* if a window is unmapped and not from different desktop,
                      * it hasn't requested mapping */
-                    continue;
+                    goto nextchild;
                 }
                 if (cd != dsk)
                     select_desktop(dsk);
@@ -2153,9 +2157,11 @@ int setup(int default_screen)
                     select_desktop(cd);
                 }
             }
+nextchild:
             free(attr);
         }
         free(reply);
+        free(attrs);
     }
 
     change_desktop(&(Arg){.i = DEFAULT_DESKTOP});
